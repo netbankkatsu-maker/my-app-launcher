@@ -10,8 +10,11 @@
   header{display:flex;justify-content:space-between;align-items:center;padding:24px 32px;background:#16162a;border-bottom:1px solid #2a2a4a}
   header h1{font-size:1.6rem;letter-spacing:.05em}
   header h1 span{color:#7c6fff}
-  .btn-add{background:#7c6fff;color:#fff;border:none;padding:10px 20px;border-radius:10px;font-size:.95rem;cursor:pointer;transition:background .2s}
-  .btn-add:hover{background:#6a5ce7}
+  .header-btns{display:flex;gap:10px}
+  .btn{background:#7c6fff;color:#fff;border:none;padding:10px 20px;border-radius:10px;font-size:.95rem;cursor:pointer;transition:background .2s}
+  .btn:hover{background:#6a5ce7}
+  .btn-sub{background:#2a2a4a}
+  .btn-sub:hover{background:#3a3a5a}
   .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:20px;padding:32px}
   .card{background:#1e1e38;border-radius:16px;padding:24px;cursor:pointer;transition:transform .2s,box-shadow .2s;position:relative;text-decoration:none;color:inherit;display:block;border:1px solid #2a2a4a}
   .card:hover{transform:translateY(-4px);box-shadow:0 8px 24px rgba(124,111,255,.2);border-color:#7c6fff}
@@ -37,8 +40,12 @@
   .btn-save{background:#7c6fff;color:#fff}
   .btn-save:hover{background:#6a5ce7}
   .empty{text-align:center;padding:80px 20px;color:#555;font-size:1.1rem}
+  .loading{text-align:center;padding:80px 20px;color:#7c6fff;font-size:1.1rem}
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#7c6fff;color:#fff;padding:12px 24px;border-radius:10px;font-size:.9rem;z-index:200;opacity:0;transition:opacity .3s;white-space:nowrap}
+  .toast.show{opacity:1}
+  .sync-indicator{font-size:.75rem;color:#555;padding:4px 12px;text-align:right}
   @media(max-width:600px){
-    header{padding:16px 20px}
+    header{padding:16px 20px;flex-wrap:wrap;gap:10px}
     .grid{padding:20px;gap:14px;grid-template-columns:repeat(auto-fill,minmax(160px,1fr))}
     .card{padding:18px}
     .card-icon{font-size:2.2rem}
@@ -48,9 +55,12 @@
 <body>
 <header>
   <h1><span>My</span> Apps</h1>
-  <button class="btn-add" onclick="openModal()">+ 追加</button>
+  <div class="header-btns">
+    <button class="btn btn-sub" onclick="openModal()">+ 追加</button>
+  </div>
 </header>
-<div class="grid" id="grid"></div>
+<div id="syncStatus" class="sync-indicator"></div>
+<div class="grid" id="grid"><div class="loading">読み込み中...</div></div>
 <div class="overlay" id="overlay" onclick="closeModal(event)">
   <div class="modal" onclick="event.stopPropagation()">
     <h2 id="modalTitle">アプリを追加</h2>
@@ -69,25 +79,50 @@
   </div>
 </div>
 <script>
-const STORAGE_KEY = 'myapps_list';
-const DEFAULT_APPS = [
-  {id:1,icon:'🧾',name:'せどりレシートくん',url:'https://sedori-receipt-kun-vercel.vercel.app',desc:'レシートを読み取ってせどり利益を計算'},
-  {id:2,icon:'📦',name:'メルカリ出品君',url:'https://listing-helper-iota.vercel.app',desc:'メルカリ出品を効率化するツール'},
-  {id:3,icon:'🎵',name:'ミュージックプレイヤー',url:'https://music-player-swart-nu.vercel.app',desc:'ブラウザで音楽を再生'},
-  {id:4,icon:'🃏',name:'デュエマ検索くん',url:'https://github.com/netbankkatsu-maker/dm-card-searcher',desc:'デュエルマスターズのカードを検索'},
-  {id:5,icon:'💰',name:'おうち家計簿ちゃん',url:'#',desc:'家庭の収支を管理する家計簿アプリ'},
-];
-const APPS_VERSION = 2;
-let apps;
-if(localStorage.getItem(STORAGE_KEY+'_v')!=APPS_VERSION){
-  apps=[...DEFAULT_APPS];localStorage.setItem(STORAGE_KEY+'_v',APPS_VERSION);save();
-}else{
-  apps=JSON.parse(localStorage.getItem(STORAGE_KEY))||[...DEFAULT_APPS];
-}
+const BLOB_ID = '019d8ad1-193c-7d27-acb5-5adbaf6a1a99';
+const API_URL = 'https://jsonblob.com/api/jsonBlob/' + BLOB_ID;
+let apps = [];
 let editingId = null;
 
-function save(){localStorage.setItem(STORAGE_KEY, JSON.stringify(apps))}
-function nextId(){return apps.length?Math.max(...apps.map(a=>a.id))+1:1}
+// サーバーからアプリ一覧を取得
+async function loadApps(){
+  try{
+    const res = await fetch(API_URL, {headers:{'Accept':'application/json'}});
+    if(!res.ok) throw new Error('fetch failed');
+    apps = await res.json();
+    setSyncStatus('同期済み');
+  }catch(e){
+    console.error('Load error:', e);
+    apps = JSON.parse(localStorage.getItem('myapps_cache')) || [];
+    setSyncStatus('オフライン（キャッシュ表示）');
+  }
+  render();
+}
+
+// サーバーに保存 + ローカルキャッシュも更新
+async function saveToServer(){
+  localStorage.setItem('myapps_cache', JSON.stringify(apps));
+  try{
+    const res = await fetch(API_URL, {
+      method: 'PUT',
+      headers: {'Content-Type':'application/json','Accept':'application/json'},
+      body: JSON.stringify(apps)
+    });
+    if(!res.ok) throw new Error('save failed');
+    setSyncStatus('保存しました');
+  }catch(e){
+    console.error('Save error:', e);
+    setSyncStatus('保存失敗（ローカルに保存済み）');
+  }
+}
+
+function setSyncStatus(msg){
+  const el = document.getElementById('syncStatus');
+  el.textContent = msg;
+  setTimeout(()=>{el.textContent='';}, 3000);
+}
+
+function nextId(){return apps.length ? Math.max(...apps.map(a=>a.id))+1 : 1}
 
 function render(){
   const grid = document.getElementById('grid');
@@ -133,7 +168,7 @@ function closeModal(e){
   document.getElementById('overlay').classList.remove('show');
 }
 
-function saveApp(){
+async function saveApp(){
   const icon=document.getElementById('fIcon').value.trim()||'📱';
   const name=document.getElementById('fName').value.trim();
   const url=document.getElementById('fUrl').value.trim()||'#';
@@ -145,15 +180,19 @@ function saveApp(){
   }else{
     apps.push({id:nextId(),icon,name,url,desc});
   }
-  save();render();closeModal();
+  render();closeModal();
+  await saveToServer();
 }
 
-function deleteApp(id){
+async function deleteApp(id){
   if(!confirm('このアプリを削除しますか？'))return;
-  apps=apps.filter(a=>a.id!==id);save();render();
+  apps=apps.filter(a=>a.id!==id);
+  render();
+  await saveToServer();
 }
 
-render();
+// 初期読み込み
+loadApps();
 </script>
 </body>
 </html>
