@@ -71,13 +71,19 @@
 <script>
 const STORAGE_KEY = 'myapps_list';
 const DEFAULT_APPS = [
-  {id:1,icon:'🧾',name:'せどりレシートくん',url:'#',desc:'レシートを読み取ってせどり利益を計算'},
-  {id:2,icon:'📦',name:'メルカリ出品君',url:'#',desc:'メルカリ出品を効率化するツール'},
-  {id:3,icon:'🎵',name:'ミュージックプレイヤー',url:'#',desc:'ブラウザで音楽を再生'},
-  {id:4,icon:'🃏',name:'デュエマ検索くん',url:'#',desc:'デュエルマスターズのカードを検索'},
+  {id:1,icon:'🧾',name:'せどりレシートくん',url:'https://sedori-receipt-kun-vercel.vercel.app',desc:'レシートを読み取ってせどり利益を計算'},
+  {id:2,icon:'📦',name:'メルカリ出品君',url:'https://listing-helper-iota.vercel.app',desc:'メルカリ出品を効率化するツール'},
+  {id:3,icon:'🎵',name:'ミュージックプレイヤー',url:'https://music-player-swart-nu.vercel.app',desc:'ブラウザで音楽を再生'},
+  {id:4,icon:'🃏',name:'デュエマ検索くん',url:'https://github.com/netbankkatsu-maker/dm-card-searcher',desc:'デュエルマスターズのカードを検索'},
   {id:5,icon:'💰',name:'おうち家計簿ちゃん',url:'#',desc:'家庭の収支を管理する家計簿アプリ'},
 ];
-let apps = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [...DEFAULT_APPS];
+const APPS_VERSION = 2;
+let apps;
+if(localStorage.getItem(STORAGE_KEY+'_v')!=APPS_VERSION){
+  apps=[...DEFAULT_APPS];localStorage.setItem(STORAGE_KEY+'_v',APPS_VERSION);save();
+}else{
+  apps=JSON.parse(localStorage.getItem(STORAGE_KEY))||[...DEFAULT_APPS];
+}
 let editingId = null;
 
 function save(){localStorage.setItem(STORAGE_KEY, JSON.stringify(apps))}
