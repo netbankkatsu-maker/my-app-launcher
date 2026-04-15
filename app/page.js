@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 
 const VIEWS = [
   { key: 'grid', icon: '\u25a6', label: 'グリッド' },
@@ -13,10 +13,16 @@ export default function Home() {
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({ icon: '', name: '', url: '', desc: '' });
   const [status, setStatus] = useState('');
+  const [editMode, setEditMode] = useState(false);
   const [view, setView] = useState(() => {
     if (typeof window !== 'undefined') return localStorage.getItem('launcher_view') || 'grid';
     return 'grid';
   });
+
+  // Drag state
+  const dragItem = useRef(null);
+  const dragOverItem = useRef(null);
+  const [dragging, setDragging] = useState(null);
 
   useEffect(() => { loadApps(); }, []);
   useEffect(() => { localStorage.setItem('launcher_view', view); }, [view]);
@@ -78,9 +84,156 @@ export default function Home() {
     setView(VIEWS[(i + 1) % VIEWS.length].key);
   }
 
+  function toggleEditMode() {
+    if (editMode) {
+      // Exiting edit mode - save current order
+      saveToServer([...apps]);
+    }
+    setEditMode(!editMode);
+  }
+
+  // Drag handlers (pointer events for touch + mouse)
+  const onDragStart = useCallback((e, index) => {
+    dragItem.current = index;
+    setDragging(index);
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', '');
+    }
+  }, []);
+
+  const onDragEnter = useCallback((index) => {
+    dragOverItem.current = index;
+    if (dragItem.current === null || dragItem.current === index) return;
+    setApps(prev => {
+      const newApps = [...prev];
+      const item = newApps.splice(dragItem.current, 1)[0];
+      newApps.splice(index, 0, item);
+      dragItem.current = index;
+      return newApps;
+    });
+  }, []);
+
+  const onDragEnd = useCallback(() => {
+    dragItem.current = null;
+    dragOverItem.current = null;
+    setDragging(null);
+  }, []);
+
+  // Touch drag
+  const touchStartY = useRef(0);
+  const touchStartX = useRef(0);
+  const touchIndex = useRef(null);
+  const itemRefs = useRef([]);
+
+  const onTouchStart = useCallback((e, index) => {
+    if (!editMode) return;
+    touchIndex.current = index;
+    dragItem.current = index;
+    setDragging(index);
+    const touch = e.touches[0];
+    touchStartY.current = touch.clientY;
+    touchStartX.current = touch.clientX;
+  }, [editMode]);
+
+  const onTouchMove = useCallback((e) => {
+    if (touchIndex.current === null || !editMode) return;
+    e.preventDefault();
+    const touch = e.touches[0];
+    const elements = itemRefs.current;
+    for (let i = 0; i < elements.length; i++) {
+      if (!elements[i]) continue;
+      const rect = elements[i].getBoundingClientRect();
+      if (touch.clientY >= rect.top && touch.clientY <= rect.bottom) {
+        if (i !== dragItem.current) {
+          onDragEnter(i);
+        }
+        break;
+      }
+    }
+  }, [editMode, onDragEnter]);
+
+  const onTouchEnd = useCallback(() => {
+    touchIndex.current = null;
+    onDragEnd();
+  }, [onDragEnd]);
+
   if (apps === null) return <div style={s.body}><div style={s.loading}>読み込み中...</div></div>;
 
   const currentView = VIEWS.find(v => v.key === view);
+
+  function renderCard(app, index) {
+    const isDragging = dragging === index;
+    const dragProps = editMode ? {
+      draggable: true,
+      onDragStart: e => onDragStart(e, index),
+      onDragEnter: () => onDragEnter(index),
+      onDragEnd: onDragEnd,
+      onDragOver: e => e.preventDefault(),
+      onTouchStart: e => onTouchStart(e, index),
+      onTouchMove: onTouchMove,
+      onTouchEnd: onTouchEnd,
+    } : {};
+
+    const dragStyle = isDragging ? { opacity: 0.5, border: '1px dashed #7c6fff' } : {};
+
+    if (view === 'grid') {
+      return (
+        <div key={app.id} ref={el => itemRefs.current[index] = el}
+          className={editMode ? '' : 'card'}
+          style={{ ...s.gridCard, ...dragStyle, cursor: editMode ? 'grab' : 'pointer' }}
+          {...dragProps}
+          onClick={() => {
+            if (editMode) return;
+            if (app.url === '#') { alert('URLが未設定です'); return; }
+            window.open(app.url, '_blank');
+          }}>
+          {editMode && <div style={s.dragHandle}>&#x2630;</div>}
+          <div style={{ fontSize: '2rem' }}>{app.icon}</div>
+          <div style={{ fontWeight: 600, fontSize: '.95rem', marginTop: 8 }}>{app.name}</div>
+          {!editMode && <div style={{ fontSize: '.75rem', color: '#666', marginTop: 4, lineHeight: 1.4 }}>{app.desc}</div>}
+        </div>
+      );
+    }
+
+    if (view === 'compact') {
+      return (
+        <div key={app.id} ref={el => itemRefs.current[index] = el}
+          className={editMode ? '' : 'card'}
+          style={{ ...s.compactCard, ...dragStyle, cursor: editMode ? 'grab' : 'pointer' }}
+          {...dragProps}
+          onClick={() => {
+            if (editMode) return;
+            if (app.url === '#') { alert('URLが未設定です'); return; }
+            window.open(app.url, '_blank');
+          }}>
+          {editMode && <div style={s.dragHandleInline}>&#x2630;</div>}
+          <div style={{ fontSize: '1.4rem', width: 36, textAlign: 'center', flexShrink: 0 }}>{app.icon}</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontWeight: 600, fontSize: '.9rem' }}>{app.name}</div>
+            {!editMode && <div style={{ fontSize: '.7rem', color: '#666', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{app.desc}</div>}
+          </div>
+        </div>
+      );
+    }
+
+    // list
+    return (
+      <div key={app.id} ref={el => itemRefs.current[index] = el}
+        className={editMode ? '' : 'card'}
+        style={{ ...s.listCard, ...dragStyle, cursor: editMode ? 'grab' : 'pointer' }}
+        {...dragProps}
+        onClick={() => {
+          if (editMode) return;
+          if (app.url === '#') { alert('URLが未設定です'); return; }
+          window.open(app.url, '_blank');
+        }}>
+        {editMode && <div style={s.dragHandleInline}>&#x2630;</div>}
+        <div style={{ fontSize: '1.1rem', width: 28, textAlign: 'center', flexShrink: 0 }}>{app.icon}</div>
+        <div style={{ flex: 1, fontWeight: 500, fontSize: '.85rem', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{app.name}</div>
+      </div>
+    );
+  }
 
   return (
     <div style={s.body}>
@@ -88,9 +241,8 @@ export default function Home() {
         *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
         a { text-decoration: none; color: inherit; }
         .card:hover { transform: translateY(-3px) !important; box-shadow: 0 6px 20px rgba(124,111,255,.25) !important; border-color: #7c6fff !important; }
-        .card-btn:hover { background: rgba(124,111,255,.15); color: #7c6fff; }
-        .del-btn:hover { background: rgba(255,77,106,.15) !important; color: #ff4d6a !important; }
-        .view-btn:hover { background: #2a2a4a; }
+        .hdr-btn:hover { background: #2a2a4a; }
+        .edit-active { background: #7c6fff22 !important; border-color: #7c6fff !important; color: #7c6fff !important; }
         @media(max-width:600px) {
           .header { padding: 12px 16px !important; }
           .grid-view { padding: 12px !important; gap: 10px !important; grid-template-columns: repeat(auto-fill,minmax(140px,1fr)) !important; }
@@ -100,74 +252,63 @@ export default function Home() {
 
       <header className="header" style={s.header}>
         <h1 style={s.h1}><span style={{ color: '#7c6fff' }}>My</span> Apps</h1>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button className="view-btn" onClick={cycleView} style={s.viewBtn} title={currentView.label}>
-            <span style={{ fontSize: 18 }}>{currentView.icon}</span>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <button className="hdr-btn" onClick={cycleView} style={s.hdrBtn} title={currentView.label}>
+            <span style={{ fontSize: 16 }}>{currentView.icon}</span>
           </button>
-          <button style={s.btnAdd} onClick={openAdd}>+</button>
+          <button className={`hdr-btn ${editMode ? 'edit-active' : ''}`} onClick={toggleEditMode} style={s.hdrBtn} title="編集モード">
+            <span style={{ fontSize: 14 }}>&#9998;</span>
+          </button>
+          {editMode ? (
+            <>
+              <button className="hdr-btn" onClick={openAdd} style={s.hdrBtn} title="追加">
+                <span style={{ fontSize: 18 }}>+</span>
+              </button>
+            </>
+          ) : (
+            <button style={s.btnAdd} onClick={openAdd} title="追加">+</button>
+          )}
         </div>
       </header>
+
+      {editMode && (
+        <div style={s.editBar}>
+          <span>編集モード: ドラッグで並び替え / タップで編集・削除</span>
+        </div>
+      )}
 
       {status && <div style={s.syncStatus}>{status}</div>}
 
       {apps.length === 0 && <div style={s.empty}>アプリがありません</div>}
 
-      {/* Grid View */}
       {view === 'grid' && apps.length > 0 && (
         <div className="grid-view" style={s.gridView}>
-          {apps.map(app => (
-            <a key={app.id} className="card" href={app.url === '#' ? undefined : app.url} target="_blank" rel="noopener"
-              onClick={e => { if (app.url === '#') { e.preventDefault(); alert('URLが未設定です'); } }}
-              style={s.gridCard}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div style={{ fontSize: '2rem' }}>{app.icon}</div>
-                <div style={{ display: 'flex', gap: 2 }}>
-                  <button className="card-btn" onClick={e => { e.preventDefault(); e.stopPropagation(); openEdit(app); }} style={s.smallBtn}>&#9998;</button>
-                  <button className="card-btn del-btn" onClick={e => { e.preventDefault(); e.stopPropagation(); handleDelete(app.id); }} style={s.smallBtn}>&times;</button>
-                </div>
-              </div>
-              <div style={{ fontWeight: 600, fontSize: '.95rem', marginTop: 8 }}>{app.name}</div>
-              <div style={{ fontSize: '.75rem', color: '#666', marginTop: 4, lineHeight: 1.4 }}>{app.desc}</div>
-            </a>
-          ))}
+          {apps.map((app, i) => renderCard(app, i))}
         </div>
       )}
 
-      {/* Compact View */}
       {view === 'compact' && apps.length > 0 && (
         <div className="compact-view" style={s.compactView}>
-          {apps.map(app => (
-            <a key={app.id} className="card" href={app.url === '#' ? undefined : app.url} target="_blank" rel="noopener"
-              onClick={e => { if (app.url === '#') { e.preventDefault(); alert('URLが未設定です'); } }}
-              style={s.compactCard}>
-              <div style={{ fontSize: '1.4rem', width: 36, textAlign: 'center', flexShrink: 0 }}>{app.icon}</div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 600, fontSize: '.9rem' }}>{app.name}</div>
-                <div style={{ fontSize: '.7rem', color: '#666', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{app.desc}</div>
-              </div>
-              <div style={{ display: 'flex', gap: 2, flexShrink: 0 }}>
-                <button className="card-btn" onClick={e => { e.preventDefault(); e.stopPropagation(); openEdit(app); }} style={s.smallBtn}>&#9998;</button>
-                <button className="card-btn del-btn" onClick={e => { e.preventDefault(); e.stopPropagation(); handleDelete(app.id); }} style={s.smallBtn}>&times;</button>
-              </div>
-            </a>
-          ))}
+          {apps.map((app, i) => renderCard(app, i))}
         </div>
       )}
 
-      {/* List View */}
       {view === 'list' && apps.length > 0 && (
         <div className="list-view" style={s.listView}>
+          {apps.map((app, i) => renderCard(app, i))}
+        </div>
+      )}
+
+      {/* Edit mode: tap on card opens action menu */}
+      {editMode && apps.length > 0 && (
+        <div style={s.editActions}>
           {apps.map(app => (
-            <a key={app.id} className="card" href={app.url === '#' ? undefined : app.url} target="_blank" rel="noopener"
-              onClick={e => { if (app.url === '#') { e.preventDefault(); alert('URLが未設定です'); } }}
-              style={s.listCard}>
-              <div style={{ fontSize: '1.1rem', width: 28, textAlign: 'center', flexShrink: 0 }}>{app.icon}</div>
-              <div style={{ flex: 1, fontWeight: 500, fontSize: '.85rem', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{app.name}</div>
-              <div style={{ display: 'flex', gap: 2, flexShrink: 0 }}>
-                <button className="card-btn" onClick={e => { e.preventDefault(); e.stopPropagation(); openEdit(app); }} style={s.tinyBtn}>&#9998;</button>
-                <button className="card-btn del-btn" onClick={e => { e.preventDefault(); e.stopPropagation(); handleDelete(app.id); }} style={s.tinyBtn}>&times;</button>
-              </div>
-            </a>
+            <div key={app.id} style={s.editRow}>
+              <span style={{ fontSize: '1rem' }}>{app.icon}</span>
+              <span style={{ flex: 1, fontSize: '.85rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{app.name}</span>
+              <button className="hdr-btn" onClick={() => openEdit(app)} style={{ ...s.actionBtn, color: '#7c6fff' }} title="編集">&#9998;</button>
+              <button className="hdr-btn" onClick={() => handleDelete(app.id)} style={{ ...s.actionBtn, color: '#ff4d6a' }} title="削除">&times;</button>
+            </div>
           ))}
         </div>
       )}
@@ -199,27 +340,33 @@ const s = {
   body: { fontFamily: "'Segoe UI','Hiragino Sans',sans-serif", background: '#0f0f1a', color: '#e0e0e0', minHeight: '100vh' },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: '#16162a', borderBottom: '1px solid #2a2a4a' },
   h1: { fontSize: '1.3rem', letterSpacing: '.05em', margin: 0 },
-  viewBtn: { background: 'none', border: '1px solid #2a2a4a', color: '#888', width: 34, height: 34, borderRadius: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  hdrBtn: { background: 'none', border: '1px solid #2a2a4a', color: '#888', width: 34, height: 34, borderRadius: 8, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all .15s' },
   btnAdd: { background: '#7c6fff', color: '#fff', border: 'none', width: 34, height: 34, borderRadius: 8, fontSize: '1.2rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' },
   syncStatus: { fontSize: '.7rem', color: '#7c6fff', padding: '2px 16px', textAlign: 'right' },
   empty: { textAlign: 'center', padding: '60px 20px', color: '#555', fontSize: '.95rem' },
   loading: { textAlign: 'center', padding: '60px 20px', color: '#7c6fff', fontSize: '1rem' },
+  editBar: { background: '#7c6fff15', borderBottom: '1px solid #7c6fff33', padding: '6px 16px', fontSize: '.75rem', color: '#7c6fff' },
 
   // Grid
   gridView: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(160px,1fr))', gap: 12, padding: 16 },
-  gridCard: { background: '#1e1e38', borderRadius: 12, padding: 14, cursor: 'pointer', transition: 'all .2s', border: '1px solid #2a2a4a', display: 'block' },
+  gridCard: { background: '#1e1e38', borderRadius: 12, padding: 14, transition: 'all .2s', border: '1px solid #2a2a4a', display: 'block', position: 'relative' },
 
   // Compact
   compactView: { display: 'flex', flexDirection: 'column', gap: 6, padding: 16 },
-  compactCard: { background: '#1e1e38', borderRadius: 10, padding: '10px 14px', cursor: 'pointer', transition: 'all .2s', border: '1px solid #2a2a4a', display: 'flex', alignItems: 'center', gap: 10 },
+  compactCard: { background: '#1e1e38', borderRadius: 10, padding: '10px 14px', transition: 'all .2s', border: '1px solid #2a2a4a', display: 'flex', alignItems: 'center', gap: 10 },
 
   // List
   listView: { display: 'flex', flexDirection: 'column', gap: 2, padding: '8px 16px' },
-  listCard: { background: '#1e1e38', borderRadius: 6, padding: '8px 10px', cursor: 'pointer', transition: 'all .2s', border: '1px solid transparent', display: 'flex', alignItems: 'center', gap: 8 },
+  listCard: { background: '#1e1e38', borderRadius: 6, padding: '8px 10px', transition: 'all .2s', border: '1px solid transparent', display: 'flex', alignItems: 'center', gap: 8 },
 
-  // Buttons
-  smallBtn: { background: 'none', border: 'none', color: '#555', fontSize: '.8rem', cursor: 'pointer', width: 24, height: 24, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all .15s' },
-  tinyBtn: { background: 'none', border: 'none', color: '#555', fontSize: '.75rem', cursor: 'pointer', width: 22, height: 22, borderRadius: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all .15s' },
+  // Drag handles
+  dragHandle: { position: 'absolute', top: 6, right: 8, color: '#555', fontSize: '.9rem' },
+  dragHandleInline: { color: '#555', fontSize: '.9rem', flexShrink: 0, cursor: 'grab' },
+
+  // Edit mode action list
+  editActions: { padding: '8px 16px', borderTop: '1px solid #2a2a4a', background: '#16162a' },
+  editRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '6px 8px', borderBottom: '1px solid #1e1e38' },
+  actionBtn: { background: 'none', border: 'none', fontSize: '1rem', cursor: 'pointer', width: 30, height: 30, borderRadius: 6, display: 'flex', alignItems: 'center', justifyContent: 'center' },
 
   // Modal
   overlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' },
