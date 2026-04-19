@@ -23,6 +23,8 @@ export default function Home() {
   const dragItem = useRef(null);
   const dragOverItem = useRef(null);
   const [dragging, setDragging] = useState(null);
+  const appsRef = useRef([]);
+  useEffect(() => { appsRef.current = apps || []; }, [apps]);
 
   useEffect(() => { loadApps(); }, []);
   useEffect(() => { localStorage.setItem('launcher_view', view); }, [view]);
@@ -103,13 +105,14 @@ export default function Home() {
   }, []);
 
   const onDragEnter = useCallback((index) => {
+    const from = dragItem.current;
+    if (from === null || from === index) return;
     dragOverItem.current = index;
-    if (dragItem.current === null || dragItem.current === index) return;
+    dragItem.current = index;
     setApps(prev => {
       const newApps = [...prev];
-      const item = newApps.splice(dragItem.current, 1)[0];
+      const item = newApps.splice(from, 1)[0];
       newApps.splice(index, 0, item);
-      dragItem.current = index;
       return newApps;
     });
   }, []);
@@ -185,8 +188,9 @@ export default function Home() {
           {...dragProps}
           onClick={() => {
             if (editMode) return;
-            if (app.url === '#') { alert('URLが未設定です'); return; }
-            window.open(app.url, '_blank');
+            const cur = appsRef.current.find(a => a.id === app.id) || app;
+            if (cur.url === '#') { alert('URLが未設定です'); return; }
+            window.open(cur.url, '_blank');
           }}>
           {editMode && <div style={s.dragHandle}>&#x2630;</div>}
           <div style={{ fontSize: '2rem' }}>{app.icon}</div>
@@ -204,8 +208,9 @@ export default function Home() {
           {...dragProps}
           onClick={() => {
             if (editMode) return;
-            if (app.url === '#') { alert('URLが未設定です'); return; }
-            window.open(app.url, '_blank');
+            const cur = appsRef.current.find(a => a.id === app.id) || app;
+            if (cur.url === '#') { alert('URLが未設定です'); return; }
+            window.open(cur.url, '_blank');
           }}>
           {editMode && <div style={s.dragHandleInline}>&#x2630;</div>}
           <div style={{ fontSize: '1.4rem', width: 36, textAlign: 'center', flexShrink: 0 }}>{app.icon}</div>
